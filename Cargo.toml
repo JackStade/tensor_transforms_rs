@@ -1,6 +1,5 @@
 [package]
 name = "tensor_transforms"
-license = "MIT OR Apache-2.0"
 version = "0.1.0"
 authors = ["Jack Stade <jack.stade@gmail.com>"]
 repository = "https://github.com/JackStade/tensor_transforms_rs.git"
