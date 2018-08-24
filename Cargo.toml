@@ -9,4 +9,3 @@ categories = ["data-structures", "science"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-tracked_mem = {git = "https://github.com/JackStade/tracked-mem-rs.git"}

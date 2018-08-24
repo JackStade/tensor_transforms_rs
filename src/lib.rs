@@ -7,8 +7,6 @@
 //! in order to make generating sets of transforms easier.
 //! This crate is a work in progress and will be seing more functionality added in the future.
 
-extern crate tracked_mem;
-
 use std::cmp::{PartialEq};
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 

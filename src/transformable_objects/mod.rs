@@ -1,12 +1,11 @@
 use {Transform, Transformable, TransformDimension};
-use tracked_mem::SafeUninitializedVec;
 
 /// Simmilar to a `SymmetryObject`, this type has one value for every direction.
 ///
 /// A DirectionObject cannot be transformed by a transform with a higher number of dimensions,
 /// because it would be unable to fill empty transforms with a default value. In the future, there might
-/// be a seperate implementation for DirectionObjects where T: Default, however for the moment this 
-/// is not possible with Rust.
+/// be a seperate implementation for `DirectionObject`s where T: Default, however for the moment this 
+/// is not easily possible with Rust.
 #[derive(Clone)]
 pub struct DirectionObject<T> {
     n: usize,
@@ -44,19 +43,22 @@ impl<T: PartialEq + Sized + Clone> Transformable for DirectionObject<T> {
             panic!("Cannot transform a direction object into a higher dimension")
         };
         let axes = transform.values();
-        let mut new_vals = SafeUninitializedVec::new(2 * self.n);
+        let mut new_vals = Vec::with_capacity(2 * self.n);
+        unsafe {
+            new_vals.set_len(2 * self.n);
+        }
         for i in 0..self.n {
             let (dim, dir) = if i < n {
                 (2 * axes[i].dim, ((axes[i].sign + 1) / 2) as usize)
             } else {
                 (2 * i, 0)
             };
-            new_vals.set_value(dim + dir, self.vals[dim].clone());
-            new_vals.set_value(dim + 1 - dir, self.vals[dim + 1].clone());
+            new_vals[dim + dir] = self.vals[dim].clone();
+            new_vals[dim + 1 - dir] = self.vals[dim + 1].clone();
         }
         DirectionObject {
             n: self.n,
-            vals: new_vals.into_vec().unwrap(),
+            vals: new_vals,
         }
     }
 }
@@ -65,6 +67,9 @@ impl<T: PartialEq + Sized + Clone> Transformable for DirectionObject<T> {
 ///
 /// This type can be transformed by a transform of any size, 
 /// since it does not need to add extra values when the dimension is increased.
+/// 
+/// For the moment, this type only implements transform if T is `Clone`. In the future
+/// there might be a way to transform it in place.
 #[derive(Clone)]
 pub struct TransformTensor<T: Sized> {
     // number of dimensions
@@ -139,7 +144,18 @@ impl<T: Sized + Clone> Transformable for TransformTensor<T> {
         }
 
         let len = Vec::len(&self.vals);
-        let mut new_vals = SafeUninitializedVec::new(len);
+        let mut new_vals = Vec::with_capacity(len);
+        // used to keep track of which elements are initialzed during debugging
+        let mut num_set = 0;
+        let mut vals_set = if cfg!(debug_assertions) {
+            Vec::with_capacity(len)
+        } else {
+            Vec::new()
+        };
+        // set the length of new_vals
+        unsafe {
+            new_vals.set_len(len);
+        }
         let mut loop_indices = vec![0; self.n];
         let mut offset = vec![0; self.n];
         let mut transform_coordinate = 0;
@@ -161,7 +177,17 @@ impl<T: Sized + Clone> Transformable for TransformTensor<T> {
         while i < self.n {
             if loop_indices[i] < self.size[i] {
                 if i == 0 {
-                    new_vals.set_value(transform_coordinate as usize, self.vals[old_index].clone());
+                    // if there are debug assertions, we check to make sure that each element of the 
+                    // vector is set once and only once.
+                    if cfg!(debug_assertions) {
+                        if vals_set[transform_coordinate as usize] {
+                            panic!("DEBUG: Transform set value: {} more than once.", transform_coordinate);
+                        } else {
+                            vals_set[transform_coordinate as usize] = true;
+                            num_set += 1;
+                        }
+                    }
+                    new_vals[transform_coordinate as usize] = self.vals[old_index].clone();
                     old_index += 1;
                 }
                 loop_indices[i] += 1;
@@ -176,10 +202,14 @@ impl<T: Sized + Clone> Transformable for TransformTensor<T> {
                 i += 1;
             }
         }
+        // check that the total number of elements set is num
+        if cfg!(debug_assertions) && num_set != len {
+            panic!("DEBUG: Transform set only {} values out of {}.", num_set, len);
+        }
         TransformTensor {
             n: max,
             size: new_size,
-            vals: new_vals.into_vec().unwrap(),
+            vals: new_vals,
         }
     }
 }
