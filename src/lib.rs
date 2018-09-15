@@ -288,7 +288,7 @@ enum Directional<'a, T: PartialEq + 'a> {
 /// which can be used to represent any rotation or transpose of an n dimensional tensor.
 /// This object to checked to make sure it represents a valid transform.
 /// Transforms implement `Add`, `Sub`, and `Neg` to compose themselves, in addition to implementing transformable.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Transform {
     // number of dimensions
     n: usize,
