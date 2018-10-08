@@ -1,19 +1,19 @@
 //! # Tensor Transforms
-//! `tensor_transforms` contains methods and structs to transform objects using orthonormal, 
+//! `tensor_transforms` contains methods and structs to transform objects using orthonormal,
 //! axis aligned transforms
-//! This type of transformation can represent any possible rotation or transpose of a matrix or 
+//! This type of transformation can represent any possible rotation or transpose of a matrix or
 //! higher dimensional tensor.
-//! The crate also contains an object to represent symmetry groups over this type of transform 
+//! The crate also contains an object to represent symmetry groups over this type of transform
 //! in order to make generating sets of transforms easier.
 //! This crate is a work in progress and will be seing more functionality added in the future.
 
-use std::cmp::{PartialEq};
+use std::cmp::PartialEq;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-/// Contains several objects that can be transformed.
-pub mod transformable_objects;
 #[cfg(test)]
 mod tests;
+/// Contains several objects that can be transformed.
+pub mod transformable_objects;
 
 /// An n dimensional object that can be used to determine a symmetry group.
 /// This contains two comparable values per dimension, one in the negative direction and one positive.
@@ -41,23 +41,29 @@ pub trait Transformable: Sized + Clone + TransformDimension {
     /// * ascociativity: T1(T2(A)) = (T1(T2))(A)
     /// * invertability: T1(-T1(A)) = -T1(T1(A)) = A
     ///
-    /// Some implementations of this method allow for transforms that do not have the same 
+    /// Some implementations of this method allow for transforms that do not have the same
     /// number of dimensions as the object, but this varies based on the object. In these cases,
     /// the output may have more dimensions than the original object, but not fewer.
     fn transform(&self, transform: &Transform) -> Self;
 
-    /// Applies all the transforms described by the axisgroups.
-    /// The number of transforms is equal to produce of the sizes of the axisgroups.
-    /// If an axis group has n axes then its size will be:
+    /// Applies all the transforms described by the axisgroups (computing the symmetry group)
+    /// of the object.
+    ///
+    /// The number of transforms is equal to produce of the orders of the axisgroups.
+    /// If an axis group has n axes then its order will be:
     /// * n! if the group is directional
     /// * (2^n)(n!) if it is not directional
     ///
-    /// This can huge numbers quickly when working with more than a few dimensions.
+    /// This can yeild huge numbers quickly when working with more than a few dimensions.
+    ///
+    /// Note that this function will return transformations that are impossible to describe as
+    /// a rigid motion, such as reflections in 2 dimensions. If this is not desireable, then use
+    /// `get_transforms_positive`.
     fn get_transformed_values(&self, groups: Vec<AxisGroup>) -> Vec<Self> {
         // get the dimension
         let n = self.dimensions();
         // the first step is to create a set of transforms for each axis group
-        let mut tset = Vec::with_capacity(Vec::len(&groups));
+        let mut tset = Vec::with_capacity(groups.len());
         let mut total_transforms = 1;
         for group in &groups {
             // get the indices of the axis in the transform
@@ -138,9 +144,10 @@ pub trait Transformable: Sized + Clone + TransformDimension {
         }
         // now just take the cartesian product of all these transformations
         let mut all_transforms = Vec::with_capacity(total_transforms);
+        // self.clone should be equivalent to the object transformed by the identity
         all_transforms.push(self.clone());
         for set in tset {
-            let old_size = Vec::len(&all_transforms);
+            let old_size = all_transforms.len();
             // skip the first transform, which is always the identity
             for t in &set[1..] {
                 for i in 0..old_size {
@@ -151,7 +158,170 @@ pub trait Transformable: Sized + Clone + TransformDimension {
         }
         all_transforms
     }
-    
+
+    /// Gets the set of transforms described by a set of axisgroups that have positive determinants.
+    ///
+    /// This is the set of transforms that can be described as a rigid motion, and would not require
+    /// temporarily squishing an object to apply the transformation.
+    fn get_transforms_positive(&self, groups: Vec<AxisGroup>) -> Vec<Self> {
+        // get the dimension
+        let n = self.dimensions();
+        // the first step is to create a set of transforms for each axis group
+        let mut tset = Vec::with_capacity(groups.len());
+        let mut total_transforms = 1;
+        let mut base_determinant = 1;
+        for group in &groups {
+            // get the indices of the axis in the transform
+            let num_axes = group.axes.len();
+            let mut axes = Vec::with_capacity(num_axes);
+            let mut sign_base = 1;
+            for &a in &group.axes {
+                axes.push(if group.directional { a / 2 } else { a });
+            }
+            // now permute that set of axes
+            // this uses heap's algorithm
+            // heaps algorithm has the clever property that we can determine
+            // the sign of the permutation (the parity of the number of swaps)
+            // easily
+            let mut permutations = Vec::with_capacity(factorial(num_axes));
+            let mut c = vec![0; num_axes];
+
+            let mut i = 0;
+            // we only permute the axes for this group,
+            // but generate transforms that contain all axes
+            let mut first = Transform::identity(n);
+            // this fixes the directionality
+            if group.directional {
+                for &a in &group.axes {
+                    first.transform[a / 2].sign *= (a as i8 % 2) * 2 - 1;
+                    base_determinant *= (a as i8 % 2) * 2 - 1;
+                }
+            }
+            permutations.push(first);
+            while i < num_axes {
+                if c[i] < i {
+                    let mut last = permutations[Vec::len(&permutations) - 1].clone();
+                    if i % 2 == 0 {
+                        (&mut last.transform[..]).swap(axes[0], axes[i]);
+                    } else {
+                        (&mut last.transform[..]).swap(axes[c[i]], axes[i]);
+                    }
+                    permutations.push(last);
+                    c[i] += 1;
+                    i = 0;
+                } else {
+                    c[i] = 0;
+                    i += 1;
+                }
+            }
+            // if the group is directional, it is now neccessary to undo the earlier flips
+            // this applies to the original axis
+            // so if a negative axis is swapped with a negative axis,
+            // both will be a positive axis in the transform
+            // but if a positive axis is swapped with a negative axis,
+            // both will be negative
+            if group.directional {
+                for a in &group.axes {
+                    for t in &mut permutations {
+                        t.transform[a / 2].sign *= (*a as i8 % 2) * 2 - 1;
+                    }
+                }
+            } else {
+                // now each transformation is copied for all possible signs
+                // we can use the bits of a usize for this operation,
+                // since the number of transforms cannot be larger than usize anyways
+                let num_permutations = permutations.len();
+                permutations.reserve(num_permutations * (1 << num_axes));
+                // the first value will be left the same, so skip it
+                for bits in 1..1 << num_axes {
+                    let mut parity = 0;
+                    // x86 has an instruction to do this, so
+                    // this will get optimized. Easier just to do
+                    // it here.
+                    for j in 0..num_axes {
+                        if (bits & 1 << j) != 0 {
+                            parity += 1;
+                        }
+                    }
+                    parity %= 2;
+                    for i in 0..num_permutations {
+                        let t = permutations[i].clone();
+                        permutations.push(t);
+                    }
+                    let window =
+                        &mut permutations[num_permutations * bits..num_permutations * (bits + 1)];
+                    for t in window.iter_mut() {
+                        for j in 0..num_axes {
+                            if (bits & 1 << j) != 0 {
+                                t.transform[group.axes[j]].sign *= -1;
+                            }
+                        }
+                    }
+                    // if the parity is odd, then we need to swap the order of the window,
+                    // so that the sign alternates
+                    // note that this actually does still work even if num_axes is equal to one
+                    if parity != 0 {
+                        window.reverse();
+                    }
+                }
+            }
+            total_transforms *= permutations.len();
+            tset.push(permutations);
+        }
+        // only need half as many values
+        let mut all_transforms = Vec::with_capacity(total_transforms / 2);
+        // self.clone should be equivalent to the object transformed by the identity
+        all_transforms.push(self.clone());
+        for (n, set) in tset.iter().enumerate() {
+            let old_size = all_transforms.len();
+            // on the last run through, only transform every other transform
+            if n < tset.len() - 1 {
+                // skip the first transform, which is always the identity
+                for t in 1..set.len() {
+                    for i in 0..old_size {
+                        // every other transform needs to have the values swapped so that the entire
+                        // array has alternating parity.
+                        // This does not need to happen if the old size is 1
+                        let swap = if t % 2 != 0 && old_size > 1 {
+                            if i % 2 == 0 {
+                                i + 1
+                            } else {
+                                i - 1
+                            }
+                        } else {
+                            i
+                        };
+                        let transformed = all_transforms[swap].transform(&set[t]);
+                        all_transforms.push(transformed);
+                    }
+                }
+            } else {
+                // first do something similar to what we did before, except only 
+                // transforming every other value.
+                // in this case we skip the first two transforms
+                for t in 2..set.len() {
+                    for i in 0..old_size / 2 {
+                        // if t is odd, then only transform values that already
+                        // have odd parity
+                        let swap = if t % 2 != 0 {
+                            i * 2 + 1
+                        } else {
+                            i * 2
+                        };
+                        let transformed = all_transforms[swap].transform(&set[t]);
+                        all_transforms.push(transformed);
+                    }
+                }
+                // at this point we need to go back through the previous set
+                // and transform every other value
+                for i in 0..old_size / 2 {
+                    all_transforms[i * 2 + 1] = all_transforms[i * 2 + 1].transform(&set[1]);
+                }
+            }
+        }
+        all_transforms
+    }
+
     /// This method is used to skip the step of generating the axisgroups from a symmetryobject
     fn transform_from<U: PartialEq>(&self, sym: &SymmetryObject<U>) -> Vec<Self> {
         self.get_transformed_values(sym.get_transforms())
@@ -178,7 +348,7 @@ impl<T: PartialEq> SymmetryObject<T> {
             colors: colors,
         })
     }
-    
+
     /// Sets a specific value to a new provided value
     pub fn set_val(&mut self, dim: usize, sign: i8, value: T) {
         self.colors[dim * 2 + ((sign + 1) / 2) as usize] = value;
@@ -250,7 +420,7 @@ impl<T: Copy + PartialEq> SymmetryObject<T> {
 }
 
 /// Represents a group of axes in a SymmetryObject that are copies of eachother.
-/// This struct is generated as the output from a SymmetryObject, and will probably be replaced 
+/// This struct is generated as the output from a SymmetryObject, and will probably be replaced
 /// with a container for `Vec<AxisGroup>` in the future.
 pub struct AxisGroup {
     directional: bool,
@@ -301,7 +471,54 @@ impl Transform {
     pub fn values(&self) -> &[TransformVector] {
         &self.transform[..]
     }
-    
+
+    /// Determines whether the rigid motion can be represented by a rigid motion
+    /// in n dimensions, or whether it requires temporarily deforming the object.
+    pub fn is_rigid_motion(&self) -> bool {
+        let mut hit = vec![false; self.n];
+        let mut num_hit = 0;
+        let mut sign = 1;
+        while num_hit < self.n {
+            let mut i = 0;
+            while hit[i] {
+                i += 1
+            }
+            let mut s = self.transform[i].dim;
+            hit[i] = true;
+            num_hit += 1;
+            while s != i {
+                hit[s] = true;
+                sign *= -1;
+                s = self.transform[s].dim;
+                num_hit += 1;
+            }
+        }
+        for i in 0..self.n {
+            sign *= self.transform[i].sign;
+        }
+        sign > 0
+    }
+
+    /// Create a new transform. This will check that the transform is
+    /// correct.
+    pub fn new(n: usize, transform: Vec<TransformVector>) -> Transform {
+        let mut values = vec![false; n];
+        if transform.len() != n {
+            panic!("The provided vec does not have the right number of element for a transform of dimension {}", n);
+        }
+        for &v in transform.iter() {
+            if values[v.dim] {
+                panic!("Transform has the same axis twice.");
+            } else {
+                values[v.dim] = true;
+            }
+        }
+        Transform {
+            n: n,
+            transform: transform,
+        }
+    }
+
     /// Generates an n dimensional identity transform
     pub fn identity(n: usize) -> Transform {
         let mut vec = Vec::with_capacity(n);
@@ -325,9 +542,9 @@ impl TransformDimension for Transform {
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub struct TransformVector {
     // the dimension
-    pub dim: usize,
+    dim: usize,
     // either -1 or 1
-    pub sign: i8,
+    sign: i8,
 }
 
 impl Default for TransformVector {
@@ -365,10 +582,7 @@ impl Transformable for Transform {
                 };
                 // extend the vector and increase the dimension of the output
                 while v2.dim >= t.n {
-                    t.transform.push(TransformVector {
-                        dim: t.n,
-                        sign: 1,
-                    });
+                    t.transform.push(TransformVector { dim: t.n, sign: 1 });
                     t.n += 1;
                 }
             }

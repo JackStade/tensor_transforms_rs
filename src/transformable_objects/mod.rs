@@ -1,10 +1,10 @@
-use {Transform, Transformable, TransformDimension};
+use {Transform, TransformDimension, Transformable};
 
 /// Simmilar to a `SymmetryObject`, this type has one value for every direction.
 ///
 /// A DirectionObject cannot be transformed by a transform with a higher number of dimensions,
 /// because it would be unable to fill empty transforms with a default value. In the future, there might
-/// be a seperate implementation for `DirectionObject`s where T: Default, however for the moment this 
+/// be a seperate implementation for `DirectionObject`s where T: Default, however for the moment this
 /// is not easily possible with Rust.
 #[derive(Clone)]
 pub struct DirectionObject<T> {
@@ -22,7 +22,7 @@ impl<U> DirectionObject<U> {
             vals: vals,
         })
     }
-    
+
     pub fn get_vals(&self) -> &[U] {
         &self.vals[..]
     }
@@ -36,7 +36,6 @@ impl<T> TransformDimension for DirectionObject<T> {
 }
 
 impl<T: PartialEq + Sized + Clone> Transformable for DirectionObject<T> {
-	
     fn transform(&self, transform: &Transform) -> DirectionObject<T> {
         let n = transform.dimensions();
         if n > self.n {
@@ -65,9 +64,9 @@ impl<T: PartialEq + Sized + Clone> Transformable for DirectionObject<T> {
 
 /// A simple n-dimensional tensor that can be transformed.
 ///
-/// This type can be transformed by a transform of any size, 
+/// This type can be transformed by a transform of any size,
 /// since it does not need to add extra values when the dimension is increased.
-/// 
+///
 /// For the moment, this type only implements transform if T is `Clone`. In the future
 /// there might be a way to transform it in place.
 #[derive(Clone)]
@@ -81,11 +80,8 @@ pub struct TransformTensor<T: Sized> {
 }
 
 impl<T: Sized> TransformTensor<T> {
-	/// Generates a new `TransformTensor`, checking to make sure the Vec has enough elements.
-    pub fn new(
-        size: &[usize],
-        vals: Vec<T>,
-    ) -> Result<TransformTensor<T>, &'static str> {
+    /// Generates a new `TransformTensor`, checking to make sure the Vec has enough elements.
+    pub fn new(size: &[usize], vals: Vec<T>) -> Result<TransformTensor<T>, &'static str> {
         let mut product = 1;
         for i in size {
             product *= i
@@ -99,11 +95,11 @@ impl<T: Sized> TransformTensor<T> {
             vals: vals,
         })
     }
-    
+
     pub fn get_size(&self) -> &[usize] {
         &self.size[..]
     }
-    
+
     pub fn get_vals(&self) -> &[T] {
         &self.vals[..]
     }
@@ -177,11 +173,14 @@ impl<T: Sized + Clone> Transformable for TransformTensor<T> {
         while i < self.n {
             if loop_indices[i] < self.size[i] {
                 if i == 0 {
-                    // if there are debug assertions, we check to make sure that each element of the 
+                    // if there are debug assertions, we check to make sure that each element of the
                     // vector is set once and only once.
                     if cfg!(debug_assertions) {
                         if vals_set[transform_coordinate as usize] {
-                            panic!("DEBUG: Transform set value: {} more than once.", transform_coordinate);
+                            panic!(
+                                "DEBUG: Transform set value: {} more than once.",
+                                transform_coordinate
+                            );
                         } else {
                             vals_set[transform_coordinate as usize] = true;
                             num_set += 1;
@@ -204,7 +203,10 @@ impl<T: Sized + Clone> Transformable for TransformTensor<T> {
         }
         // check that the total number of elements set is num
         if cfg!(debug_assertions) && num_set != len {
-            panic!("DEBUG: Transform set only {} values out of {}.", num_set, len);
+            panic!(
+                "DEBUG: Transform set only {} values out of {}.",
+                num_set, len
+            );
         }
         TransformTensor {
             n: max,
